@@ -1,31 +1,26 @@
-const mercadopago = require("mercadopago");
-const applyCors = require("../../utils/cors");
-const { createOrder } = require("../../utils/orders");
+// api/mp/create-preference.js
+
+const mercadopago = require('mercadopago');
+const { createOrder } = require('../../lib/orders');
+
+const { MP_ACCESS_TOKEN, BACKEND_BASE_URL } = process.env;
 
 mercadopago.configure({
-  access_token: process.env.MP_ACCESS_TOKEN
+  access_token: MP_ACCESS_TOKEN || ''
 });
 
 module.exports = async (req, res) => {
-  applyCors(req, res, ["POST", "OPTIONS"]);
-
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
-
-  if (!process.env.MP_ACCESS_TOKEN) {
-    return res
-      .status(500)
-      .json({ error: "MP_ACCESS_TOKEN não configurado no backend" });
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    const body =
-      typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+    if (!MP_ACCESS_TOKEN) {
+      return res.status(500).json({
+        error: 'MP_ACCESS_TOKEN não configurado no backend'
+      });
+    }
 
     const {
       orderId,
@@ -36,97 +31,106 @@ module.exports = async (req, res) => {
       successUrl,
       failureUrl,
       pendingUrl
-    } = body;
+    } = req.body || {};
 
-    if (!items || !Array.isArray(items) || !items.length) {
-      return res.status(400).json({ error: "Itens do pedido são obrigatórios" });
+    // validações básicas
+    if (!orderId) {
+      return res.status(400).json({ error: 'orderId é obrigatório' });
+    }
+    if (!customer || !customer.name) {
+      return res.status(400).json({ error: 'Dados do cliente inválidos' });
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'Itens do pedido inválidos' });
+    }
+    const totalNumber = Number(total || 0);
+    if (!totalNumber || totalNumber <= 0) {
+      return res.status(400).json({ error: 'Total do pedido inválido' });
     }
 
-    if (!customer || !customer.name || !customer.phone) {
-      return res.status(400).json({
-        error: "Dados do cliente são obrigatórios (customer.name, customer.phone)"
+    const deliveryTypeSafe =
+      deliveryType === 'ENTREGA' || deliveryType === 'RETIRADA'
+        ? deliveryType
+        : 'RETIRADA';
+
+    // monta itens para o Mercado Pago
+    const mpItems = items.map((it) => ({
+      id: it.id,
+      title: it.name,
+      quantity: Number(it.quantity || 1),
+      currency_id: 'BRL',
+      unit_price: Number(it.unit_price || 0)
+    }));
+
+    const notificationUrl = BACKEND_BASE_URL
+      ? `${BACKEND_BASE_URL.replace(/\/$/, '')}/api/mp/webhook`
+      : undefined;
+
+    const preference = {
+      items: mpItems,
+      external_reference: orderId,
+      back_urls: {
+        success: successUrl || '',
+        failure: failureUrl || '',
+        pending: pendingUrl || ''
+      },
+      auto_return: 'approved',
+      payer: {
+        name: customer.name || '',
+        phone: {
+          number: customer.phone || ''
+        },
+        address: {
+          street_name: customer.address || '',
+          zip_code: customer.cep || ''
+        }
+      }
+    };
+
+    if (notificationUrl) {
+      preference.notification_url = notificationUrl;
+    }
+
+    const prefResult = await mercadopago.preferences.create(preference);
+    const prefBody = prefResult && prefResult.body ? prefResult.body : {};
+
+    const initPoint = prefBody.init_point;
+    const preferenceId = prefBody.id;
+
+    if (!initPoint) {
+      console.error('[mp][create-preference] resposta sem init_point:', prefBody);
+      return res.status(500).json({
+        error: 'Não foi possível obter o link de pagamento do Mercado Pago'
       });
     }
 
-    if (!total) {
-      return res.status(400).json({ error: "Total é obrigatório" });
-    }
-
-    if (!successUrl || !failureUrl) {
-      return res
-        .status(400)
-        .json({ error: "successUrl e failureUrl são obrigatórios" });
-    }
-
-    const totalNumber = Number(total);
-    if (Number.isNaN(totalNumber) || totalNumber <= 0) {
-      return res.status(400).json({ error: "Total inválido" });
-    }
-
-    const BACKEND_BASE_URL =
-      process.env.BACKEND_BASE_URL || `https://${req.headers.host}`;
-
-    // 1) Cria/garante pedido na esteira com status aguardando pagamento
-    const paymentType = "MERCADO_PAGO";
-    const orderData = {
+    // registra pedido no Firestore com status pendente de pagamento
+    await createOrder({
       orderId,
       customer,
       items,
       total: totalNumber,
-      deliveryType: deliveryType || "RETIRADA",
-      paymentType,
-      status: "AGUARDANDO_PAGAMENTO",
-      source: "SITE_XBOM"
-    };
-
-    const savedOrder = await createOrder(orderData);
-    const finalOrderId = savedOrder.orderId;
-
-    const title = `Pedido X-Bom - ${customer.name}`;
-
-    const preference = {
-      items: [
-        {
-          id: finalOrderId,
-          title,
-          quantity: 1,
-          unit_price: totalNumber
-        }
-      ],
-      metadata: {
-        orderId: finalOrderId
-      },
-      back_urls: {
-        success: `${successUrl}?status=approved&orderId=${encodeURIComponent(
-          finalOrderId
-        )}`,
-        failure: `${failureUrl}?status=failure&orderId=${encodeURIComponent(
-          finalOrderId
-        )}`,
-        pending:
-          pendingUrl ||
-          `${successUrl}?status=pending&orderId=${encodeURIComponent(
-            finalOrderId
-          )}`
-      },
-      auto_return: "approved",
-      notification_url: `${BACKEND_BASE_URL}/api/mp/webhook`
-    };
-
-    const result = await mercadopago.preferences.create(preference);
+      deliveryType: deliveryTypeSafe,
+      paymentType: 'PAGAR_AGORA_MP',
+      status: 'PENDENTE_PAGAMENTO',
+      origem: 'site',
+      mp: {
+        preferenceId,
+        init_point: initPoint
+      }
+    });
 
     return res.status(200).json({
       ok: true,
-      orderId: finalOrderId,
-      preferenceId: result.body.id,
-      init_point: result.body.init_point,
-      sandbox_init_point: result.body.sandbox_init_point
+      orderId,
+      init_point: initPoint,
+      preference_id: preferenceId
     });
   } catch (err) {
-    console.error("Erro em /api/mp/create-preference:", err);
+    console.error('[mp][create-preference] erro:', err);
     return res.status(500).json({
-      error: "Erro ao criar preferência de pagamento",
-      details: err.message || String(err)
+      error: 'Erro ao criar preferência de pagamento',
+      detail: err.message || String(err)
     });
   }
 };
