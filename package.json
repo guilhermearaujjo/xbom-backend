@@ -1,0 +1,17 @@
+{
+  "name": "xbom-backend",
+  "version": "1.0.0",
+  "description": "Backend do X-Bom (pedidos + Mercado Pago + esteira básica)",
+  "main": "api/health.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "start": "node api/health.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.0.0",
+    "mercadopago": "^1.5.16"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}
