@@ -10,7 +10,15 @@ mercadopago.configure({
   access_token: MP_ACCESS_TOKEN || ""
 });
 
-module.exports = applyCors(async (req, res) => {
+module.exports = async (req, res) => {
+  // === CORS SEMPRE PRIMEIRO ===
+  applyCors(req, res);
+
+  // Preflight (OPTIONS) – navegador checa CORS aqui
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Method not allowed" });
@@ -34,7 +42,7 @@ module.exports = applyCors(async (req, res) => {
       pendingUrl
     } = req.body || {};
 
-    // validações básicas
+    // ===== VALIDAÇÕES BÁSICAS =====
     if (!orderId) {
       return res.status(400).json({ error: "orderId é obrigatório" });
     }
@@ -145,4 +153,4 @@ module.exports = applyCors(async (req, res) => {
       detail: err.message || String(err)
     });
   }
-});
+};
