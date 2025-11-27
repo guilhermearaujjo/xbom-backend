@@ -1,7 +1,7 @@
 // api/mp/create-preference.js
 
 const mercadopago = require('mercadopago');
-const { createOrder } = require('../../lib/orders');
+const { createOrder } = require('../../utils/orders');
 
 const { MP_ACCESS_TOKEN, BACKEND_BASE_URL } = process.env;
 
