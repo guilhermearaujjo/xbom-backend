@@ -10,17 +10,9 @@ mercadopago.configure({
   access_token: MP_ACCESS_TOKEN || ""
 });
 
-module.exports = async (req, res) => {
-  // CORS para frontend (Hostinger) conseguir chamar essa rota
-  applyCors(req, res, ["POST", "OPTIONS"]);
-
-  // Pré-flight do navegador
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-
+module.exports = applyCors(async (req, res) => {
   if (req.method !== "POST") {
-    res.setHeader("Allow", "POST, OPTIONS");
+    res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Method not allowed" });
   }
 
@@ -62,6 +54,11 @@ module.exports = async (req, res) => {
         ? deliveryType
         : "RETIRADA";
 
+    // ===== NORMALIZA TELEFONE (MP exige number) =====
+    const rawPhone = customer.phone || customer.telefone || "";
+    const phoneDigits = String(rawPhone).replace(/\D/g, "");
+    const phoneNumber = phoneDigits ? Number(phoneDigits) : null;
+
     // monta itens para o Mercado Pago
     const mpItems = items.map((it) => ({
       id: it.id,
@@ -75,6 +72,21 @@ module.exports = async (req, res) => {
       ? `${BACKEND_BASE_URL.replace(/\/$/, "")}/api/mp/webhook`
       : undefined;
 
+    const payer = {
+      name: customer.name || "",
+      address: {
+        street_name: customer.address || "",
+        zip_code: customer.cep || ""
+      }
+    };
+
+    // só envia phone se tiver número válido
+    if (phoneNumber && !Number.isNaN(phoneNumber)) {
+      payer.phone = {
+        number: phoneNumber
+      };
+    }
+
     const preference = {
       items: mpItems,
       external_reference: orderId,
@@ -84,16 +96,7 @@ module.exports = async (req, res) => {
         pending: pendingUrl || ""
       },
       auto_return: "approved",
-      payer: {
-        name: customer.name || "",
-        phone: {
-          number: customer.phone || ""
-        },
-        address: {
-          street_name: customer.address || "",
-          zip_code: customer.cep || ""
-        }
-      }
+      payer
     };
 
     if (notificationUrl) {
@@ -142,4 +145,4 @@ module.exports = async (req, res) => {
       detail: err.message || String(err)
     });
   }
-};
+});
