@@ -52,10 +52,16 @@ module.exports = async (req, res) => {
     }
 
     const result = await mercadopago.payment.findById(paymentId);
-    const payment = result.body;
+    const payment = result.body || {};
 
     const status = payment.status; // ex: "approved", "rejected", "pending"
-    const orderId = payment.metadata && payment.metadata.orderId;
+
+    // tenta primeiro metadata.orderId; se não tiver, usa external_reference
+    const metaOrderId =
+      payment.metadata &&
+      (payment.metadata.orderId || payment.metadata.order_id);
+    const orderId = metaOrderId || payment.external_reference || null;
+
     const method = payment.payment_type_id; // ex: "credit_card", "pix"
     const value = payment.transaction_amount;
 
@@ -85,6 +91,11 @@ module.exports = async (req, res) => {
           value
         });
       }
+    } else {
+      console.warn(
+        "Webhook MP: pagamento sem orderId mapeado (metadata/external_reference vazios)",
+        { paymentId }
+      );
     }
 
     return res.status(200).send("Webhook processado");
