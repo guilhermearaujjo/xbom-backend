@@ -98,6 +98,7 @@ module.exports = async (req, res) => {
     const preference = {
       items: mpItems,
       external_reference: orderId,
+      metadata: { orderId }, // 👈 AGORA O WEBHOOK CONSEGUE LER
       back_urls: {
         success: successUrl || "",
         failure: failureUrl || "",
