@@ -1,15 +1,17 @@
 // api/status.js
 
-// ⚠️ IMPORTANTE:
-// COPIE EXATAMENTE a mesma importação usada no /api/orders.js.
-// Exemplo (APENAS EXEMPLO — substitua pelo seu):
-// const admin = require("../utils/firebaseAdmin");
-
-const db = admin.firestore();
+const applyCors = require("../utils/cors");
+const { getOrder } = require("../utils/orders");
 
 module.exports = async (req, res) => {
+  // libera CORS para GET e OPTIONS
+  applyCors(req, res, ["GET", "OPTIONS"]);
+
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   try {
-    // Apenas GET é permitido
     if (req.method !== "GET") {
       res.setHeader("Allow", "GET");
       return res.status(405).json({
@@ -18,7 +20,7 @@ module.exports = async (req, res) => {
       });
     }
 
-    const { orderId } = req.query;
+    const { orderId } = req.query || {};
 
     if (!orderId) {
       return res.status(400).json({
@@ -27,40 +29,45 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Busca no Firestore
-    const snap = await db.collection("orders").doc(orderId).get();
+    // usa o mesmo helper do /api/orders
+    const order = await getOrder(orderId);
 
-    if (!snap.exists) {
+    if (!order) {
       return res.status(404).json({
         ok: false,
         error: "Pedido não encontrado"
       });
     }
 
-    const order = snap.data();
+    // normaliza status para checar se já está pago
+    const rawStatus = String(order.status || "").toUpperCase();
+    const rawPaymentType = String(order.paymentType || "").toUpperCase();
 
-    // Normaliza qualquer tipo de status que possa representar "pago"
-    const statusRaw = String(order.status || order.paymentStatus || "").toUpperCase();
-
+    // aqui você pode afinar depois, mas a lógica base é:
+    // - status contendo "PAGO (MP)" ou "PAGO"
+    // - ou paymentType indicando algo de pagamento online aprovado
     const isPaid =
-      statusRaw.includes("PAGO (MP)") ||
-      statusRaw.includes("PAGO") ||
-      statusRaw.includes("PAID") ||
-      statusRaw.includes("APPROVED");
+      rawStatus.includes("PAGO (MP)") ||
+      rawStatus.includes("PAGO") ||
+      rawStatus.includes("APPROVED") ||
+      rawPaymentType.includes("ONLINE_MP") ||
+      rawPaymentType.includes("ONLINE");
 
-    return res.json({
+    return res.status(200).json({
       ok: true,
       orderId,
       isPaid,
-      status: order.status || order.paymentStatus || null
+      status: order.status || null,
+      paymentType: order.paymentType || null,
+      order
     });
 
   } catch (err) {
-    console.error("[/api/status] erro:", err);
-
+    console.error("Erro em /api/status:", err);
     return res.status(500).json({
       ok: false,
-      error: "Erro interno ao consultar status do pedido"
+      error: "Erro interno em /api/status",
+      details: err.message || String(err)
     });
   }
 };
