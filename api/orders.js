@@ -1,13 +1,12 @@
 const applyCors = require("../utils/cors");
 const { createOrder, listOrders, getOrder } = require("../utils/orders");
+const { enviarParaFila } = require("./fila");
 
 module.exports = async (req, res) => {
   applyCors(req, res, ["GET", "POST", "OPTIONS"]);
-
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
-
   try {
     if (req.method === "GET") {
       const { id } = req.query || {};
@@ -22,11 +21,9 @@ module.exports = async (req, res) => {
         return res.status(200).json({ ok: true, orders });
       }
     }
-
     if (req.method === "POST") {
       const body =
         typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
-
       const {
         orderId,
         customer,
@@ -35,37 +32,35 @@ module.exports = async (req, res) => {
         deliveryType,
         paymentType
       } = body;
-
       if (!items || !Array.isArray(items) || !items.length) {
         return res.status(400).json({ error: "Itens do pedido são obrigatórios" });
       }
-
       if (!customer || !customer.name || !customer.phone) {
         return res.status(400).json({
           error: "Dados do cliente são obrigatórios (customer.name, customer.phone)"
         });
       }
-
       if (!total) {
         return res.status(400).json({ error: "Total é obrigatório" });
       }
-
       const orderData = {
         orderId,
         customer,
         items,
         total: Number(total),
         deliveryType: deliveryType || "RETIRADA",
-        paymentType: paymentType || "PAGAR_DEPOIS", // retirada/entrega pagando no balcão
+        paymentType: paymentType || "PAGAR_DEPOIS",
         status: "AGUARDANDO_PREPARO",
         source: "SITE_XBOM"
       };
-
       const saved = await createOrder(orderData);
+
+      // envia para fila PHP da Hostinger (impressora em segundo plano)
+      // o .catch garante que falha na fila nunca derruba o pedido
+      enviarParaFila(saved).catch(err => console.error('[fila] erro:', err));
 
       return res.status(201).json({ ok: true, order: saved });
     }
-
     return res.status(405).json({ error: "Method not allowed" });
   } catch (err) {
     console.error("Erro em /api/orders:", err);
