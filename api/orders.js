@@ -56,8 +56,13 @@ module.exports = async (req, res) => {
       const saved = await createOrder(orderData);
 
       // envia para fila PHP da Hostinger (impressora em segundo plano)
-      // o .catch garante que falha na fila nunca derruba o pedido
-      enviarParaFila(saved).catch(err => console.error('[fila] erro:', err));
+      // await garante que a chamada termine antes do Vercel finalizar a função
+      // try/catch garante que falha na fila nunca derruba o pedido
+      try {
+        await enviarParaFila(saved);
+      } catch (err) {
+        console.error('[fila] erro:', err);
+      }
 
       return res.status(201).json({ ok: true, order: saved });
     }
