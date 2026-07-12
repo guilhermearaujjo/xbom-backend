@@ -1,6 +1,7 @@
 const mercadopago = require("mercadopago");
 const applyCors = require("../../utils/cors");
-const { updateOrderStatus } = require("../../utils/orders");
+const { updateOrderStatus, getOrder } = require("../../utils/orders");
+const { enviarParaFila } = require("../fila");
 
 mercadopago.configure({
   access_token: process.env.MP_ACCESS_TOKEN
@@ -8,15 +9,12 @@ mercadopago.configure({
 
 module.exports = async (req, res) => {
   applyCors(req, res, ["POST", "GET", "OPTIONS"]);
-
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
-
   if (req.method !== "POST" && req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
   }
-
   if (!process.env.MP_ACCESS_TOKEN) {
     console.error("Webhook chamado sem MP_ACCESS_TOKEN configurado");
     return res.status(500).send("MP_ACCESS_TOKEN não configurado");
@@ -53,7 +51,6 @@ module.exports = async (req, res) => {
 
     const result = await mercadopago.payment.findById(paymentId);
     const payment = result.body || {};
-
     const status = payment.status; // ex: "approved", "rejected", "pending"
 
     // tenta primeiro metadata.orderId; se não tiver, usa external_reference
@@ -75,6 +72,20 @@ module.exports = async (req, res) => {
 
     if (orderId) {
       if (status === "approved") {
+        // busca o pedido ANTES de atualizar, para saber se já tinha sido processado
+        // (protege contra o Mercado Pago reenviar a mesma notificação mais de uma vez,
+        // o que faria o pedido imprimir duplicado)
+        let existingOrder = null;
+        try {
+          existingOrder = await getOrder(orderId);
+        } catch (err) {
+          console.error("[webhook] erro ao buscar pedido existente:", err);
+        }
+
+        const jaEstavaPago =
+          existingOrder &&
+          String(existingOrder.status || "").toUpperCase() === "PAGO";
+
         await updateOrderStatus(orderId, "PAGO", {
           paymentId,
           provider: "MERCADO_PAGO",
@@ -82,6 +93,29 @@ module.exports = async (req, res) => {
           method,
           value
         });
+
+        if (!jaEstavaPago) {
+          try {
+            // busca o pedido completo (customer, items, total, etc.) para montar o cupom
+            const pedidoCompleto = existingOrder || (await getOrder(orderId));
+            if (pedidoCompleto) {
+              await enviarParaFila(pedidoCompleto);
+            } else {
+              console.warn(
+                "[webhook][fila] pedido aprovado mas não encontrado no Firestore:",
+                orderId
+              );
+            }
+          } catch (err) {
+            // falha ao enviar para a fila nunca deve derrubar o webhook
+            console.error("[webhook][fila] erro ao enviar para fila:", err);
+          }
+        } else {
+          console.log(
+            "[webhook] pedido já estava marcado como PAGO, pulando fila (notificação duplicada):",
+            orderId
+          );
+        }
       } else if (status === "rejected" || status === "cancelled") {
         await updateOrderStatus(orderId, "PAGAMENTO_FALHOU", {
           paymentId,
