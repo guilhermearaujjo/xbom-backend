@@ -1,7 +1,6 @@
 const applyCors = require("../utils/cors");
 const { createOrder, listOrders, getOrder } = require("../utils/orders");
 const { enviarParaFila } = require("./fila");
-
 module.exports = async (req, res) => {
   applyCors(req, res, ["GET", "POST", "OPTIONS"]);
   if (req.method === "OPTIONS") {
@@ -29,8 +28,13 @@ module.exports = async (req, res) => {
         customer,
         items,
         total,
+        subtotal,
+        taxa,
         deliveryType,
-        paymentType
+        paymentType,
+        paymentOnDeliveryMethod,
+        obs,
+        origem
       } = body;
       if (!items || !Array.isArray(items) || !items.length) {
         return res.status(400).json({ error: "Itens do pedido são obrigatórios" });
@@ -48,13 +52,17 @@ module.exports = async (req, res) => {
         customer,
         items,
         total: Number(total),
+        subtotal: subtotal !== undefined ? Number(subtotal) : undefined,
+        taxa: taxa !== undefined ? Number(taxa) : undefined,
         deliveryType: deliveryType || "RETIRADA",
         paymentType: paymentType || "PAGAR_DEPOIS",
+        paymentOnDeliveryMethod: paymentOnDeliveryMethod || "dinheiro",
+        obs: obs || "",
+        origem: origem || "site",
         status: "AGUARDANDO_PREPARO",
         source: "SITE_XBOM"
       };
       const saved = await createOrder(orderData);
-
       // envia para fila PHP da Hostinger (impressora em segundo plano)
       // await garante que a chamada termine antes do Vercel finalizar a função
       // try/catch garante que falha na fila nunca derruba o pedido
@@ -63,7 +71,6 @@ module.exports = async (req, res) => {
       } catch (err) {
         console.error('[fila] erro:', err);
       }
-
       return res.status(201).json({ ok: true, order: saved });
     }
     return res.status(405).json({ error: "Method not allowed" });
