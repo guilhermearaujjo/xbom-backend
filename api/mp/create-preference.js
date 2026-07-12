@@ -39,7 +39,8 @@ module.exports = async (req, res) => {
       deliveryType,
       successUrl,
       failureUrl,
-      pendingUrl
+      pendingUrl,
+      client_uid
     } = req.body || {};
 
     // ===== VALIDAÇÕES BÁSICAS =====
@@ -135,6 +136,7 @@ module.exports = async (req, res) => {
       paymentType: "PAGAR_AGORA_MP",
       status: "PENDENTE_PAGAMENTO",
       origem: "site",
+      client_uid: client_uid || null,
       mp: {
         preferenceId,
         init_point: initPoint
