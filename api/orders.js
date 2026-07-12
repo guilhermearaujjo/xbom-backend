@@ -34,8 +34,7 @@ module.exports = async (req, res) => {
         paymentType,
         paymentOnDeliveryMethod,
         obs,
-        origem,
-        client_uid
+        origem
       } = body;
       if (!items || !Array.isArray(items) || !items.length) {
         return res.status(400).json({ error: "Itens do pedido são obrigatórios" });
@@ -60,7 +59,6 @@ module.exports = async (req, res) => {
         paymentOnDeliveryMethod: paymentOnDeliveryMethod || "dinheiro",
         obs: obs || "",
         origem: origem || "site",
-        client_uid: client_uid || null,
         status: "AGUARDANDO_PREPARO",
         source: "SITE_XBOM"
       };
