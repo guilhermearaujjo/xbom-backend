@@ -1,6 +1,7 @@
 const mercadopago = require("mercadopago");
 const applyCors = require("../../utils/cors");
-const { updateOrderStatus, getOrder } = require("../../utils/orders");
+const { updateOrderStatus } = require("../../utils/orders");
+const { db, admin } = require("../../utils/firebase");
 const { enviarParaFila } = require("../fila");
 
 mercadopago.configure({
@@ -72,47 +73,63 @@ module.exports = async (req, res) => {
 
     if (orderId) {
       if (status === "approved") {
-        // busca o pedido ANTES de atualizar, para saber se já tinha sido processado
-        // (protege contra o Mercado Pago reenviar a mesma notificação mais de uma vez,
-        // o que faria o pedido imprimir duplicado)
-        let existingOrder = null;
+        // ===== PROTEÇÃO CONTRA IMPRESSÃO DUPLICADA =====
+        // O Mercado Pago pode (e frequentemente) envia a mesma notificação de
+        // pagamento mais de uma vez. Um simples "checa status, depois atualiza"
+        // tem uma brecha de corrida: se duas notificações chegarem quase juntas,
+        // as duas podem checar "ainda não pago" antes de qualquer uma terminar
+        // de atualizar, e as duas mandam pra fila (impressão duplicada).
+        //
+        // Uma transação do Firestore resolve isso de forma atômica: mesmo que
+        // duas chamadas rodem ao mesmo tempo, o Firestore garante que só uma
+        // delas vai "vencer" e ver o status como ainda não-pago.
+        let shouldPrint = false;
+        let pedidoCompleto = null;
+
         try {
-          existingOrder = await getOrder(orderId);
+          await db.runTransaction(async (t) => {
+            const ref = db.collection("orders").doc(orderId);
+            const snap = await t.get(ref);
+            if (!snap.exists) return;
+
+            const data = snap.data();
+            pedidoCompleto = { id: snap.id, ...data };
+
+            const statusAtual = String(data.status || "").toUpperCase();
+            if (statusAtual !== "PAGO") {
+              shouldPrint = true;
+              t.update(ref, {
+                status: "PAGO",
+                payment: {
+                  paymentId,
+                  provider: "MERCADO_PAGO",
+                  status,
+                  method,
+                  value
+                },
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+              });
+            }
+          });
         } catch (err) {
-          console.error("[webhook] erro ao buscar pedido existente:", err);
+          console.error("[webhook] erro na transação de status:", err);
         }
 
-        const jaEstavaPago =
-          existingOrder &&
-          String(existingOrder.status || "").toUpperCase() === "PAGO";
-
-        await updateOrderStatus(orderId, "PAGO", {
-          paymentId,
-          provider: "MERCADO_PAGO",
-          status,
-          method,
-          value
-        });
-
-        if (!jaEstavaPago) {
+        if (shouldPrint && pedidoCompleto) {
           try {
-            // busca o pedido completo (customer, items, total, etc.) para montar o cupom
-            const pedidoCompleto = existingOrder || (await getOrder(orderId));
-            if (pedidoCompleto) {
-              await enviarParaFila(pedidoCompleto);
-            } else {
-              console.warn(
-                "[webhook][fila] pedido aprovado mas não encontrado no Firestore:",
-                orderId
-              );
-            }
+            await enviarParaFila(pedidoCompleto);
           } catch (err) {
             // falha ao enviar para a fila nunca deve derrubar o webhook
             console.error("[webhook][fila] erro ao enviar para fila:", err);
           }
-        } else {
+        } else if (!shouldPrint) {
           console.log(
             "[webhook] pedido já estava marcado como PAGO, pulando fila (notificação duplicada):",
+            orderId
+          );
+        } else {
+          console.warn(
+            "[webhook][fila] pedido aprovado mas não encontrado no Firestore:",
             orderId
           );
         }
