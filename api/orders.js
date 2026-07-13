@@ -65,21 +65,32 @@ module.exports = async (req, res) => {
         source: "SITE_XBOM"
       };
       const saved = await createOrder(orderData);
-
       // atualiza o diretório de clientes (painel) — nunca derruba o pedido se falhar
       try {
         await upsertCustomer(saved);
       } catch (err) {
         console.error('[customers] erro:', err);
       }
-
       // envia para fila PHP da Hostinger (impressora em segundo plano)
       // await garante que a chamada termine antes do Vercel finalizar a função
       // try/catch garante que falha na fila nunca derruba o pedido
-      try {
-        await enviarParaFila(saved);
-      } catch (err) {
-        console.error('[fila] erro:', err);
+      //
+      // IMPORTANTE: pedidos pagos ONLINE (Mercado Pago) NÃO imprimem aqui.
+      // Eles só devem imprimir quando o webhook confirmar o pagamento como
+      // aprovado — senão imprime 2x (uma na criação, outra na confirmação).
+      const isPagamentoOnline = /ONLINE|MP/i.test(orderData.paymentType || "");
+
+      if (!isPagamentoOnline) {
+        try {
+          await enviarParaFila(saved);
+        } catch (err) {
+          console.error('[fila] erro:', err);
+        }
+      } else {
+        console.log(
+          '[fila] pedido pago online, aguardando confirmação do webhook para imprimir:',
+          saved.id || saved.orderId
+        );
       }
       return res.status(201).json({ ok: true, order: saved });
     }
