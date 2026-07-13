@@ -88,6 +88,16 @@ module.exports = async (req, res) => {
 
         try {
           await db.runTransaction(async (t) => {
+            // IMPORTANTE: o Firestore pode reexecutar esta função internamente
+            // se detectar conflito de concorrência (duas notificações do MP
+            // chegando quase juntas, mexendo no mesmo pedido). Por isso,
+            // resetamos shouldPrint/pedidoCompleto a CADA tentativa — sem
+            // isso, um "shouldPrint = true" de uma tentativa anterior (que
+            // foi invalidada pelo conflito) vazava para fora mesmo quando a
+            // tentativa final via o status já como "PAGO".
+            shouldPrint = false;
+            pedidoCompleto = null;
+
             const ref = db.collection("orders").doc(orderId);
             const snap = await t.get(ref);
             if (!snap.exists) return;
