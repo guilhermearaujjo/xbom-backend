@@ -148,10 +148,75 @@ module.exports = async (req, res) => {
         });
       }
     } else {
-      console.warn(
-        "Webhook MP: pagamento sem orderId mapeado (metadata/external_reference vazios)",
-        { paymentId }
-      );
+      // ===== PIX AVULSO =====
+      // Pagamento recebido na conta sem orderId mapeado (metadata/external_reference
+      // vazios) — ou seja, não veio de um pedido criado pelo Xbom. Se for um Pix
+      // aprovado, imprimimos um recibo simples mesmo assim.
+      const paymentMethodId = payment.payment_method_id; // "pix", "master", "visa", etc.
+
+      if (status === "approved" && paymentMethodId === "pix") {
+        // Mesma lógica de proteção contra duplicidade usada acima, só que numa
+        // coleção separada, já que aqui não existe um "pedido" no Firestore.
+        let jaProcessado = false;
+
+        try {
+          await db.runTransaction(async (t) => {
+            const ref = db
+              .collection("pix_avulso_processados")
+              .doc(String(paymentId));
+            const snap = await t.get(ref);
+            if (snap.exists) {
+              jaProcessado = true;
+              return;
+            }
+            t.set(ref, {
+              paymentId,
+              valor: value,
+              criado_em: admin.firestore.FieldValue.serverTimestamp()
+            });
+          });
+        } catch (err) {
+          console.error(
+            "[webhook][pix-avulso] erro na transação de dedup:",
+            err
+          );
+        }
+
+        if (jaProcessado) {
+          console.log(
+            "[webhook][pix-avulso] pagamento já processado, ignorando duplicata:",
+            paymentId
+          );
+        } else {
+          const payer = payment.payer || {};
+          const nomePagador =
+            [payer.first_name, payer.last_name].filter(Boolean).join(" ") ||
+            payer.email ||
+            "Não informado";
+
+          const reciboPix = {
+            tipo: "pix_avulso",
+            paymentId,
+            valor: value,
+            nomePagador,
+            dataHora: new Date().toISOString()
+          };
+
+          try {
+            await enviarParaFila(reciboPix);
+          } catch (err) {
+            console.error(
+              "[webhook][pix-avulso][fila] erro ao enviar para fila:",
+              err
+            );
+          }
+        }
+      } else {
+        console.warn(
+          "Webhook MP: pagamento sem orderId mapeado (metadata/external_reference vazios)",
+          { paymentId, status, paymentMethodId: payment.payment_method_id }
+        );
+      }
     }
 
     return res.status(200).send("Webhook processado");
