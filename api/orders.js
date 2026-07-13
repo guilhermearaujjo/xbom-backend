@@ -1,5 +1,5 @@
 const applyCors = require("../utils/cors");
-const { createOrder, listOrders, getOrder } = require("../utils/orders");
+const { createOrder, listOrders, getOrder, upsertCustomer } = require("../utils/orders");
 const { enviarParaFila } = require("./fila");
 module.exports = async (req, res) => {
   applyCors(req, res, ["GET", "POST", "OPTIONS"]);
@@ -65,6 +65,14 @@ module.exports = async (req, res) => {
         source: "SITE_XBOM"
       };
       const saved = await createOrder(orderData);
+
+      // atualiza o diretório de clientes (painel) — nunca derruba o pedido se falhar
+      try {
+        await upsertCustomer(saved);
+      } catch (err) {
+        console.error('[customers] erro:', err);
+      }
+
       // envia para fila PHP da Hostinger (impressora em segundo plano)
       // await garante que a chamada termine antes do Vercel finalizar a função
       // try/catch garante que falha na fila nunca derruba o pedido
