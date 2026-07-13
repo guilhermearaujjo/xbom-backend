@@ -1,6 +1,6 @@
 const mercadopago = require("mercadopago");
 const applyCors = require("../../utils/cors");
-const { updateOrderStatus } = require("../../utils/orders");
+const { updateOrderStatus, upsertCustomer } = require("../../utils/orders");
 const { db, admin } = require("../../utils/firebase");
 const { enviarParaFila } = require("../fila");
 
@@ -121,6 +121,11 @@ module.exports = async (req, res) => {
           } catch (err) {
             // falha ao enviar para a fila nunca deve derrubar o webhook
             console.error("[webhook][fila] erro ao enviar para fila:", err);
+          }
+          try {
+            await upsertCustomer(pedidoCompleto);
+          } catch (err) {
+            console.error("[webhook][customers] erro:", err);
           }
         } else if (!shouldPrint) {
           console.log(
