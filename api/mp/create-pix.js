@@ -123,7 +123,14 @@ module.exports = async (req, res) => {
       subtotal: Number(subtotal || 0),
       taxa: Number(taxa || 0),
       deliveryType: deliveryTypeSafe,
-      paymentType: "PAGAR_AGORA_PIX",
+      // ATENÇÃO: precisa ser exatamente "PAGAR_AGORA_MP", o mesmo valor que o
+      // create-preference grava. Vários pontos do sistema identificam pagamento
+      // online procurando o texto "MP" dentro deste campo — o fila.php da
+      // esteira (que monta o texto impresso) e o "Meus pedidos" no site.
+      // Um valor diferente faz o pedido ser impresso como "pagar na entrega".
+      // A distinção entre Pix e cartão fica no campo paymentFlow abaixo.
+      paymentType: "PAGAR_AGORA_MP",
+      paymentFlow: "PIX_TRANSPARENTE",
       status: "PENDENTE_PAGAMENTO",
       origem: "site",
       obs: obs || "",
